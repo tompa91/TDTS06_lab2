@@ -461,14 +461,14 @@ int receive_msg(int sock, int dir, char **buf)
 {
     int full_size = 0, offset = 0, regresp, header_end;
     struct segNode *List = (struct segNode *) malloc(sizeof(struct segNode));
-    List->next = NULL;
-    struct segNode *iter = List;
+
     regex_t find[1];
     regmatch_t match[1];
 
 
     // if inc msg is a response
     if (dir == 1) {
+        struct segNode *iter = List;
         while((iter->SEGSIZE = recv(sock, iter->buf, SEGSIZE_est, 0)) > 0) {
             full_size += iter->SEGSIZE;
             struct segNode *newNode = (struct segNode *) malloc(sizeof(struct segNode));
@@ -507,6 +507,7 @@ int receive_msg(int sock, int dir, char **buf)
                 memcpy(*buf, List->buf, header_end);
             }
 
+            free(List);
         }
         else if(full_size == 0)
             return -2;
