@@ -43,11 +43,11 @@
       <file leaf-file-name="main.c" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/main.c">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="252">
-              <caret line="503" column="30" selection-start-line="503" selection-start-column="30" selection-end-line="503" selection-end-column="30" />
+            <state relative-caret-position="117">
+              <caret line="191" column="43" selection-start-line="191" selection-start-column="43" selection-end-line="191" selection-end-column="43" />
               <folding>
                 <element signature="e#0#18#0" expanded="true" />
-                <element signature="e#9633#11660#0" expanded="true" />
+                <element signature="e#10283#12310#0" expanded="true" />
               </folding>
             </state>
           </provider>
@@ -296,12 +296,12 @@
       <workItem from="1475507747738" duration="2839000" />
       <workItem from="1475510612590" duration="13752000" />
       <workItem from="1475695295579" duration="36369000" />
-      <workItem from="1475830896066" duration="838000" />
+      <workItem from="1475830896066" duration="5158000" />
     </task>
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="146763000" />
+    <option name="totallyTimeSpent" value="151083000" />
   </component>
   <component name="ToolWindowManager">
     <frame x="57" y="52" width="771" height="848" extended-state="4" />
@@ -365,7 +365,7 @@
           <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#9633#11660#0" expanded="true" />
+            <element signature="e#10283#12310#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -384,7 +384,7 @@
           <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#9633#11660#0" expanded="true" />
+            <element signature="e#10283#12310#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -403,7 +403,7 @@
           <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#9633#11660#0" expanded="true" />
+            <element signature="e#10283#12310#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -422,7 +422,7 @@
           <caret line="0" column="0" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#9633#11660#0" expanded="true" />
+            <element signature="e#10283#12310#0" expanded="true" />
           </folding>
         </state>
       </provider>
@@ -440,11 +440,11 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/main.c">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="252">
-          <caret line="503" column="30" selection-start-line="503" selection-start-column="30" selection-end-line="503" selection-end-column="30" />
+        <state relative-caret-position="117">
+          <caret line="191" column="43" selection-start-line="191" selection-start-column="43" selection-end-line="191" selection-end-column="43" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#9633#11660#0" expanded="true" />
+            <element signature="e#10283#12310#0" expanded="true" />
           </folding>
         </state>
       </provider>

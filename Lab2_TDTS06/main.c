@@ -131,7 +131,7 @@ int main(void) {
 void sock_process(int sock_id, char *port) {
     struct addrinfo *result, hints;
     int servSock;
-    char *request;
+    char *request, *response;
     // IN_OUT = 0: Indicates msg should be outgoing (to server)
     // IN_OUT = 1: msg should go to client
     int IN_OUT;
@@ -169,6 +169,7 @@ void sock_process(int sock_id, char *port) {
             continue;
         }
 
+        free(buf);
 
         /** requested server URL                                    */
         char *server_URL;
@@ -186,9 +187,25 @@ void sock_process(int sock_id, char *port) {
 
         printf("Server socket ID: %d\n", servSock);
 
-        //send(sock_id, request, sizeof(request), 0);
+        send(sock_id, request, sizeof(request), 0);
 
+        /** Receive response from server */
+        IN_OUT = 1;
+        msgSize = receive_msg(sock_id, IN_OUT, &buf);
 
+        printf("SENT REQ: %d bytes", msgSize);
+
+        /** Check if requested URL contains a "not allowed" word    */
+        /** Change to Connection: keep-alive if need be                  */
+        /** CONTENT REDIRECT if CONTENT is bad and continue to loop end     */
+        if(process_msg(buf, &response, msgSize, 1)) {
+            amount = send(sock_id, REDIRECT_MSG_CONTENT, sizeof(REDIRECT_MSG_CONTENT), 0);
+            continue;
+        }
+
+        free(buf);
+
+        printf("%s", response);
 
         /*regex_t find[1];
         regmatch_t match[1];
@@ -459,44 +476,74 @@ void sock_process(int sock_id, char *port) {
 /** Receive whatever message */
 int receive_msg(int sock, int dir, char **buf)
 {
-    int full_size = 0, offset = 0, regresp, header_end;
+    int full_size = 0, offset = 0, regresp;
     struct segNode *List = (struct segNode *) malloc(sizeof(struct segNode));
-
+    struct segNode *deleteNode;
+    List->next = NULL;
     regex_t find[1];
     regmatch_t match[1];
 
+    struct segNode *iter = List;
+    while((iter->SEGSIZE = recv(sock, iter->buf, SEGSIZE_est, 0)) > 0) {
+        full_size += iter->SEGSIZE;
 
-    // if inc msg is a response
-    if (dir == 1) {
-        struct segNode *iter = List;
-        while((iter->SEGSIZE = recv(sock, iter->buf, SEGSIZE_est, 0)) > 0) {
-            full_size += iter->SEGSIZE;
-            struct segNode *newNode = (struct segNode *) malloc(sizeof(struct segNode));
-            iter->next = newNode;
-            iter = iter->next;
+        if(dir == 0) {
+            regcomp(find, "\r\n\r\n", 0);
+            regresp = regexec(find, iter->buf, 1, match, REG_ICASE | REG_EXTENDED);
+
+            if(regresp == 0) {
+                break;
+            }
         }
+        printf("iI want to read more!½!!!!!!\n");
+        struct segNode *newNode = (struct segNode *) malloc(sizeof(struct segNode));
+        newNode->next = NULL;
+        iter->next = newNode;
+        iter = iter->next;
+    }
 
-        if(iter->SEGSIZE < 0) {
-            return -1;
-        }
-
-        *buf = (char *) malloc(full_size);
-
+    printf("fuk uea\n");
+    if(iter->SEGSIZE < 0) {
         iter = List;
-        struct segNode *deleteNode;
-
-        while(iter->SEGSIZE > 0)
-        {
-            // LOAD INTO BUF UNTIL SEGSIZE = 0
-            memcpy(*buf[offset], iter->buf, iter->SEGSIZE);
-            offset += iter->SEGSIZE;
+        while(iter != NULL) {
             deleteNode = iter;
             iter = iter->next;
             free(deleteNode);
         }
-        free(iter);
+        return -1;
+    }
+
+    *buf = (char *) malloc(full_size + 1);
+
+    iter = List;
+
+    char *temp = *buf;
+
+    while(iter != NULL) {
+        // LOAD INTO BUF UNTIL SEGSIZE = 0
+        memcpy(&temp[offset], iter->buf, iter->SEGSIZE);
+        offset += iter->SEGSIZE;
+        deleteNode = iter;
+        iter = iter->next;
+        free(deleteNode);
+    }
+
+    temp[full_size] = '\0';
+
     // if inc msg is a request
-    } else {
+    /*if (dir == 0) {
+        regcomp(find, "\r\n\r\n", 0);
+        regresp = regexec(find, List->buf, 1, match, REG_ICASE | REG_EXTENDED);
+
+        if (regresp == 0) {
+            header_end = match->rm_eo;
+            *buf = (char *) malloc(header_end);
+            memcpy(*buf, List->buf, header_end);
+            printf("found Header end!\n");
+        }
+    }*/
+    // if inc msg is a request
+    /* } else {
         if((full_size = recv(sock, List->buf, SEGSIZE_est, 0)) > 0) {
             regcomp(find, "\r\n\r\n", 0);
             regresp = regexec(find, List->buf, 1, match, REG_ICASE|REG_EXTENDED);
@@ -510,8 +557,8 @@ int receive_msg(int sock, int dir, char **buf)
             free(List);
         }
         else if(full_size == 0)
-            return -2;
-    }
+            return -2;*/
+
 
     return full_size;
 }
