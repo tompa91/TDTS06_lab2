@@ -25,9 +25,9 @@ int receive_msg(int sock, int dir, char **buf);
 
 void sock_process(int sock_id, char *port);
 
-int process_msg(char *buf, char **fixed_req, int msg_size, int connection);
+int process_msg(char *buf, char **fixed_req, int *msg_size, int connection);
 
-void get_server_URL(char **addr, char *buf);
+void get_server_URL(char **addr, char **buf, int *buf_size);
 
 int server_connect(char *URL, struct addrinfo *res);
 
@@ -141,7 +141,7 @@ void sock_process(int sock_id, char *port) {
     //getaddrinfo(node, port, &hints, &result);
 
     while(1) {
-        printf("SOCK ID: %d\n", sock_id);
+        printf("SOCK ID: %i\n", sock_id);
 
         char *buf;
 
@@ -152,7 +152,7 @@ void sock_process(int sock_id, char *port) {
 
         //msgSize = recv(sock_id, buf, sizeof(buf), 0);
 
-        //printf("MESSAGE SIZE: %d\n%s", msgSize, buf);
+        printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, msgSize, buf);
 
         if(msgSize <= 0) {
 
@@ -164,7 +164,7 @@ void sock_process(int sock_id, char *port) {
         /** Check if requested URL contains a "not allowed" word    */
         /** Change to Connection: close if need be                  */
         /** URL REDIRECT if URL is bad and continue to loop end     */
-        if(process_msg(buf, &request, msgSize, 0)) {
+        if(process_msg(buf, &request, &msgSize, 0)) {
             amount = send(sock_id, REDIRECT_MSG_URL, sizeof(REDIRECT_MSG_URL), 0);
             continue;
         }
@@ -173,8 +173,9 @@ void sock_process(int sock_id, char *port) {
 
         /** requested server URL                                    */
         char *server_URL;
-        get_server_URL(&server_URL, request);
+        get_server_URL(&server_URL, &request, &msgSize);
         printf("%s\n", server_URL);
+
 
 
         /** Connect to requested URL                                */
@@ -185,27 +186,35 @@ void sock_process(int sock_id, char *port) {
             printf("Connection ERROR\n");
         }
 
-        printf("Server socket ID: %d\n", servSock);
+        printf("Server socket ID: %i\n", servSock);
 
-        send(sock_id, request, sizeof(request), 0);
-
+        int sent_bytes = send(servSock, request, msgSize, 0);
+        printf("%i\n", sent_bytes);
+        //printf("SIZE OF REQ: %i\n", msgSize);
         /** Receive response from server */
         IN_OUT = 1;
-        msgSize = receive_msg(sock_id, IN_OUT, &buf);
+        msgSize = receive_msg(servSock, IN_OUT, &buf);
 
-        printf("SENT REQ: %d bytes", msgSize);
+        //printf("Recvd Response: %i bytes\n%s", msgSize, buf);
 
         /** Check if requested URL contains a "not allowed" word    */
         /** Change to Connection: keep-alive if need be                  */
         /** CONTENT REDIRECT if CONTENT is bad and continue to loop end     */
-        if(process_msg(buf, &response, msgSize, 1)) {
+        if(process_msg(buf, &response, &msgSize, 1)) {
             amount = send(sock_id, REDIRECT_MSG_CONTENT, sizeof(REDIRECT_MSG_CONTENT), 0);
             continue;
         }
 
         free(buf);
 
-        printf("%s", response);
+        printf("Fixed Response:\n%s\n", response);
+
+        sent_bytes = send(sock_id, response, msgSize, 0);
+
+        free(response);
+        free(request);
+
+
 
         /*regex_t find[1];
         regmatch_t match[1];
@@ -495,14 +504,12 @@ int receive_msg(int sock, int dir, char **buf)
                 break;
             }
         }
-        printf("iI want to read more!½!!!!!!\n");
         struct segNode *newNode = (struct segNode *) malloc(sizeof(struct segNode));
         newNode->next = NULL;
         iter->next = newNode;
         iter = iter->next;
     }
 
-    printf("fuk uea\n");
     if(iter->SEGSIZE < 0) {
         iter = List;
         while(iter != NULL) {
@@ -526,6 +533,72 @@ int receive_msg(int sock, int dir, char **buf)
         deleteNode = iter;
         iter = iter->next;
         free(deleteNode);
+    }
+
+    if(dir == 1) {
+        int start_offset, end_offset;
+        char tmp[full_size];
+
+        regcomp(find, "Location:.http://", 0);
+        regresp = regexec(find, *buf, 1, match, REG_ICASE|REG_EXTENDED);
+
+        if(regresp == 0) {
+            start_offset = match->rm_eo;
+            printf("HEJ\n");
+            regcomp(find, "\r\n", 0);
+            regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE | REG_EXTENDED);
+
+            if (regresp == 0) {
+                end_offset = start_offset + match->rm_so;
+                printf("HEJ2\n");
+                regcomp(find, "http://", 0);
+                regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE | REG_EXTENDED);
+
+                if(regresp == 0) {
+                    int new_end = start_offset + match->rm_so;
+                    if((new_end > start_offset) && (new_end < end_offset)) {
+                        printf("HEJ3\n");
+                        memcpy(tmp, *buf, full_size);
+                        free(*buf);
+                        *buf = (char *) malloc(full_size - (end_offset - new_end));
+
+                        memcpy(*buf, tmp, new_end);
+                        memcpy(*buf + new_end, tmp + end_offset, full_size - end_offset);
+
+                        full_size -= (end_offset - new_end);
+                    }
+                }
+#if 0
+                if (!((end_offset - start_offset) % 2)) {
+                    int start_off2 = start_offset + 4;
+                    int i;
+                    int mid = (end_offset - start_off2) / 2;
+
+                    printf("YAS\n");
+                    printf("Mid: %i\n%s\n\n\n%s\n\n", mid, *buf + start_off2, *buf + start_off2 + mid);
+
+                    for (i = 0; i < mid; i++) {
+                        if (tmp[start_off2 + i] != tmp[start_off2 + mid + i])
+                            break;
+                    }
+
+                    printf("FUCK\n");
+
+                    if (i == mid - 1) {
+                        char temp[full_size];
+                        memcpy(temp, *buf, full_size);
+                        free(*buf);
+                        *buf = (char *) malloc(full_size - mid);
+                        memcpy(*buf, temp, start_off2 + mid);
+                        memcpy(*buf + start_off2 + mid, temp + end_offset, full_size - end_offset);
+
+                        end_offset = start_off2 + mid;
+                        full_size -= mid;
+                    }
+                }
+#endif
+            }
+        }
     }
 
     temp[full_size] = '\0';
@@ -567,7 +640,7 @@ int receive_msg(int sock, int dir, char **buf)
     Eventually changes connection type.
     Connection = 0 will change to close, = 1 will change to keep-alive.
     Returns 1 if it was a bad msg.    */
-int process_msg(char *buf, char **fixed_msg, int msg_size, int connection)
+int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
 {
     int j, k;
 
@@ -576,8 +649,6 @@ int process_msg(char *buf, char **fixed_msg, int msg_size, int connection)
 
     //regcomp(find, not_allowed, 0);
     int regresp;// = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
-
-    printf("JAJAJAJJAA\n");
 
     /*if(regresp == 0) {
         printf("NEJNEJNEJNEJNEJ\n");
@@ -590,12 +661,9 @@ int process_msg(char *buf, char **fixed_msg, int msg_size, int connection)
         regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
 
         if (regresp == 0) {
-            *fixed_msg = (char *) malloc(msg_size - 5);
-            printf("NÄNÄNÄNÄNÄ\n");
+            *fixed_msg = (char *) malloc(*msg_size - 5);
 
             //*fixed_msg[msg_size - 5] = '\0';
-            printf("HAJHAJHAJ\n");
-
 
             k = match->rm_so;
 
@@ -604,8 +672,9 @@ int process_msg(char *buf, char **fixed_msg, int msg_size, int connection)
 
             k += 5;
 
-            memcpy(*fixed_msg + k, buf + match->rm_eo, msg_size - match->rm_eo);
-            printf("%s\n", *fixed_msg);
+            memcpy(*fixed_msg + k, buf + match->rm_eo, *msg_size - match->rm_eo);
+            *msg_size -= 5;
+            //printf("%s\n", *fixed_msg);
         }
     }
     // if change connection to keep-alive:
@@ -616,26 +685,100 @@ int process_msg(char *buf, char **fixed_msg, int msg_size, int connection)
         if (regresp == 0) {
             k = match->rm_eo - 5;
 
-            *fixed_msg = (char *) malloc(msg_size + 5);
+            *fixed_msg = (char *) malloc(*msg_size + 5);
 
             //*fixed_msg[msg_size + 5] = '\0';
 
             memcpy(*fixed_msg, buf, k);
             memcpy(*fixed_msg + k, "keep-alive", 10);
-            memcpy(*fixed_msg + k + 10, buf + k + 5, msg_size - k - 10);
+            memcpy(*fixed_msg + k + 10, buf + k + 5, *msg_size - k - 10);
+
+            *msg_size += 5;
         }
     }
 
-    printf("%s\n", *fixed_msg);
+    //printf("%s\n", *fixed_msg);
 
     return 0;
 }
 
 /** Finds the URL for a HTTP GET request            */
-void get_server_URL(char **addr, char *buf)
+void get_server_URL(char **addr, char **buf, int *buf_size)
 {
-    printf("%s\n", buf);
+    //printf("%s\n", buf);
+    regex_t find[1];
+    regmatch_t match[1];
+    int regresp;
+    int start_offset, end_offset;
 
+    char *tmp = *buf;
+
+    regcomp(find, "Host:.", 0);
+    regresp = regexec(find, *buf, 1, match, REG_ICASE|REG_EXTENDED);
+
+    if(regresp == 0) {
+        start_offset = match->rm_eo;
+
+        printf("START OFFSET: %i\n", start_offset);
+
+        //regcomp(find, "\b( HTTP/1.1| HTTP/1.0)\b", 0);
+        regcomp(find, "\r\n", 0);
+        regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE|REG_EXTENDED);
+
+        if(regresp == 0) {
+            end_offset = start_offset + match->rm_so;
+
+            printf("END OFFSET: %i\n", end_offset);
+#if 0
+            if(!((end_offset - start_offset) % 2)) {
+                int start_off2 = start_offset + 4;
+                int i;
+                int mid = (end_offset - start_off2) / 2;
+
+                printf("YAS\n");
+                printf("Mid: %i\n%s\n\n\n%s\n\n", mid, *buf + start_off2, *buf + start_off2 + mid);
+
+                for(i = 0; i < mid; i++) {
+                    if(tmp[start_off2 + i] != tmp[start_off2 + mid + i])
+                        break;
+                }
+
+                printf("FUCK\n");
+
+                if(i == mid - 1) {
+                    char temp[*buf_size];
+                    memcpy(temp, *buf, *buf_size);
+                    free(*buf);
+                    *buf = (char *) malloc(*buf_size - mid);
+                    memcpy(*buf, temp, start_off2 + mid);
+                    memcpy(*buf + start_off2 + mid, temp + end_offset, *buf_size - end_offset);
+
+                    end_offset = start_off2 + mid;
+                    *buf_size -= mid;
+                }
+            }
+#endif
+        } else { return; }
+    } else { return; }
+
+    if(tmp[end_offset - 1] == '/')
+        end_offset -= 1;
+
+    int i = start_offset;
+
+    if(tmp[i] == 'w' && tmp[i + 1] == 'w' && tmp[i + 2] == 'w' && tmp[i + 3] == '.') {
+        *addr = (char *) malloc(end_offset - start_offset);
+
+        memcpy(*addr, *buf + start_offset, end_offset - start_offset);
+    } else {
+        *addr = (char *) malloc(end_offset - start_offset + 4);
+
+        memcpy(*addr, "www.", 4);
+        memcpy(*addr + 4, *buf + start_offset, end_offset - start_offset);
+    }
+
+
+#if 0
     int i = 1, j, start;
 
     while (buf[i - 1] != '\n')
@@ -655,9 +798,10 @@ void get_server_URL(char **addr, char *buf)
     memcpy(*addr, temp, i - start + 1);
 
     //*addr[i - start + 1] = '\0';
+#endif
 
-    printf("num chars: %d\n", i - start + 1);
-    printf("%s\n", *addr);
+    printf("num chars: %i\n", end_offset-start_offset);
+    printf("SERVER URL: %s\n", *addr);
 }
 
 
