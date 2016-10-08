@@ -180,13 +180,13 @@ void sock_process(int sock_id, char *port) {
 
         /** Connect to requested URL                                */
         if((servSock = server_connect(server_URL, result)) == -1) {
-            printf("getaddrinfo ERROR\n");
+            printf("getaddrinfo ERROR to %s\n", server_URL);
         }
         else if(servSock == -2) {
             printf("Connection ERROR\n");
         }
 
-        printf("Server socket ID: %i\n", servSock);
+        printf("Server socket ID: %i, URL: %s\n", servSock, server_URL);
 
         int sent_bytes = send(servSock, request, msgSize, 0);
         printf("%i\n", sent_bytes);
@@ -208,7 +208,7 @@ void sock_process(int sock_id, char *port) {
 
         free(buf);
 
-        printf("Fixed Response:\n%s\n", response);
+        printf("Fixed Response from %s:\n%s\n", server_URL, response);
 
         sent_bytes = send(sock_id, response, msgSize, 0);
 
@@ -814,7 +814,7 @@ int server_connect(char *URL, struct addrinfo *res)
     int status;
 
     if((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
-        fprintf(stderr, "getaddrinfo error (%s): %s\n", URL, gai_strerror(status));
+        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
 
         // Retry getaddrinfo() if URL does not start with "www."
 
