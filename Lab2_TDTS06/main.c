@@ -27,9 +27,9 @@ void sock_process(int sock_id, char *port);
 
 int process_msg(char *buf, char **fixed_req, int *msg_size, int connection);
 
-void get_server_URL(char **addr, char *buf, int *buf_size);
+int get_server_URL(char **addr, char *buf, int *buf_size);
 
-int server_connect(char *URL, struct addrinfo *res);
+int server_connect(char **URL, int *URL_SIZE);
 
 // Response segment list structure
 struct segNode {
@@ -129,7 +129,6 @@ int main(void) {
 //typedef char* not_allowed[4] = {"SpongeBob", "Britney Spears", "Paris Hilton", "Norrk.ping"};
 
 void sock_process(int sock_id, char *port) {
-    struct addrinfo *result, hints;
     int servSock;
     char *request, *response;
     // IN_OUT = 0: Indicates msg should be outgoing (to server)
@@ -154,9 +153,11 @@ void sock_process(int sock_id, char *port) {
 
         printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, msgSize, buf);
 
-        if(msgSize <= 0) {
+        if(msgSize == 0 || msgSize < 0) {
+            printf("\n\n\nYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAS\n\n\n");
+            free(buf);
 
-            break;
+            return;
         }
 
         int amount;
@@ -166,6 +167,7 @@ void sock_process(int sock_id, char *port) {
         /** URL REDIRECT if URL is bad and continue to loop end     */
         if(process_msg(buf, &request, &msgSize, 0)) {
             amount = send(sock_id, REDIRECT_MSG_URL, sizeof(REDIRECT_MSG_URL), 0);
+            free(buf);
             continue;
         }
 
@@ -173,13 +175,15 @@ void sock_process(int sock_id, char *port) {
 
         /** requested server URL                                    */
         char *server_URL;
-        get_server_URL(&server_URL, request, &msgSize);
+        int URL_SIZE = get_server_URL(&server_URL, request, &msgSize);
+
         printf("%s\n", server_URL);
 
-
+        if(URL_SIZE == -1)
+            printf("URL could not be found. Very strange!\n");
 
         /** Connect to requested URL                                */
-        if((servSock = server_connect(server_URL, result)) == -1) {
+        if((servSock = server_connect(&server_URL, &URL_SIZE)) == -1) {
             printf("getaddrinfo ERROR to %s\n", server_URL);
         }
         else if(servSock == -2) {
@@ -195,6 +199,8 @@ void sock_process(int sock_id, char *port) {
         IN_OUT = 1;
         msgSize = receive_msg(servSock, IN_OUT, &buf);
 
+        printf("RESPONSE SIZE from URL: %s, %i bytes\n\n", server_URL, msgSize);
+        printf("UNFIXED Response:\n%s\n", buf);
         close(servSock);
         //printf("Recvd Response: %i bytes\n%s", msgSize, buf);
 
@@ -480,7 +486,7 @@ void sock_process(int sock_id, char *port) {
     //close(servSock);
 
     // when we don't need result(X) anymore
-    freeaddrinfo(result);
+    //freeaddrinfo(result);
 }
 
 /** Receive whatever message */
@@ -645,8 +651,12 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
 {
     int j, k;
 
+    char *temp1;
+    char *temp2;
+
     regex_t find[1];
     regmatch_t match[1];
+    printf("%s\n", buf);
 
     //regcomp(find, not_allowed, 0);
     int regresp;// = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
@@ -658,12 +668,13 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
 
     // if change connection to close:
     if(connection == 0) {
-        regcomp(find, "keep.alive", 0);
+        regcomp(find, "[K|k]eep.[A|a]live", 0);
         regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
 
         if (regresp == 0) {
             *fixed_msg = (char *) malloc(*msg_size - 5);
-
+            temp1 = *fixed_msg;
+            temp2 = buf;
             //*fixed_msg[msg_size - 5] = '\0';
 
             k = match->rm_so;
@@ -676,35 +687,55 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
             memcpy(*fixed_msg + k, buf + match->rm_eo, *msg_size - match->rm_eo);
             *msg_size -= 5;
             //printf("%s\n", *fixed_msg);
+        } else {
+            *fixed_msg = (char *) malloc(*msg_size);
+            memcpy(*fixed_msg, buf, *msg_size);
         }
     }
     // if change connection to keep-alive:
     else if(connection == 1) {
-        regcomp(find, "Connection..close", 0);
+        regcomp(find, "Connection..[C|c]lose", 0);
+        /** KOLLA UPP REG_ICASE OCH REG_EXTENDED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
         regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
 
         if (regresp == 0) {
+            printf("\nClose hittades!\n\n");
             k = match->rm_eo - 5;
 
             *fixed_msg = (char *) malloc(*msg_size + 5);
-
+            temp1 = *fixed_msg;
+            temp2 = buf;
             //*fixed_msg[msg_size + 5] = '\0';
+            memcpy(temp1, temp2, k);
 
+            memcpy(temp1 + k, "keep-alive", 10);
+
+            memcpy(temp1 + k + 10, temp2 + k + 5, *msg_size - k - 5);
+
+#if 0
             memcpy(*fixed_msg, buf, k);
             memcpy(*fixed_msg + k, "keep-alive", 10);
             memcpy(*fixed_msg + k + 10, buf + k + 5, *msg_size - k - 10);
-
+#endif
             *msg_size += 5;
+        } else {
+            *fixed_msg = (char *) malloc(*msg_size);
+            temp1 = *fixed_msg;
+            temp2 = buf;
+            memcpy(temp1, temp2, *msg_size);
+            //memcpy(*fixed_msg, buf, *msg_size);
         }
     }
 
-    //printf("%s\n", *fixed_msg);
+
+    printf("%s\n", *fixed_msg);
+
 
     return 0;
 }
 
 /** Finds the URL for a HTTP GET request            */
-void get_server_URL(char **addr, char *buf, int *buf_size)
+int get_server_URL(char **addr, char *buf, int *buf_size)
 {
     //printf("%s\n", buf);
     regex_t find[1];
@@ -712,7 +743,7 @@ void get_server_URL(char **addr, char *buf, int *buf_size)
     int regresp;
     int start_offset, end_offset;
 
-    char *tmp = buf;
+    char *tmp;
 
     regcomp(find, "Host:.", 0);
     regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
@@ -759,8 +790,8 @@ void get_server_URL(char **addr, char *buf, int *buf_size)
                 }
             }
 #endif
-        } else { return; }
-    } else { return; }
+        } else { return -1; }
+    } else { return -1; }
 
     //if(tmp[end_offset - 1] == '/')
     //    end_offset -= 1;
@@ -768,9 +799,11 @@ void get_server_URL(char **addr, char *buf, int *buf_size)
     //int i = start_offset;
 
     //if(tmp[i] == 'w' && tmp[i + 1] == 'w' && tmp[i + 2] == 'w' && tmp[i + 3] == '.') {
-        *addr = (char *) malloc(end_offset - start_offset);
+        *addr = (char *) malloc(end_offset - start_offset + 1);
 
         memcpy(*addr, buf + start_offset, end_offset - start_offset);
+        tmp = *addr;
+        tmp[end_offset - start_offset] = '\0';
     //}
 
 
@@ -798,10 +831,11 @@ void get_server_URL(char **addr, char *buf, int *buf_size)
 
     printf("num chars: %i\n", end_offset - start_offset);
     printf("SERVER URL: %s\n", *addr);
+    return (end_offset - start_offset);
 }
 
 
-int server_connect(char *URL, struct addrinfo *res)
+int server_connect(char **URL, int *URL_SIZE)
 {
     struct addrinfo *pServInfo, *pIt, hints;
     int server_socket;
@@ -813,43 +847,44 @@ int server_connect(char *URL, struct addrinfo *res)
 
     int status;
 
-    if((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
+    if((status = getaddrinfo(*URL, "http", &hints, &pServInfo)) != 0) {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
 
         // Retry getaddrinfo() if URL does not start with "www."
 
-        char *tmp_r = URL;
+        char *tmp_r = *URL;
+
         if(!(tmp_r[0] == 'w' && tmp_r[1] == 'w' && tmp_r[2] == 'w' && tmp_r[3] == '.')) {
-            int size = sizeof(URL);
+            int size = *URL_SIZE;
             char tmp[size + 4];
-            memcpy(tmp + 4, URL, size);
-            free(URL);
-            URL = (char *) malloc(size + 4);
+            memcpy(tmp + 4, *URL, *URL_SIZE);
+            free(*URL);
+            *URL = (char *) malloc(*URL_SIZE + 4);
 
-            memcpy(URL, "www.", 4);
-            memcpy(URL + 4, tmp + 4, size);
+            memcpy(*URL, "www.", 4);
+            memcpy(*URL + 4, tmp + 4, *URL_SIZE);
 
-            if((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
-                fprintf(stderr, "getaddrinfo error (%s): %s\n", URL, gai_strerror(status));
+            if((status = getaddrinfo(*URL, "http", &hints, &pServInfo)) != 0) {
+                fprintf(stderr, "getaddrinfo error (%s): %s\n", *URL, gai_strerror(status));
                 return -1;
             }
+        } else {
+            return -1;
         }
-
-
     }
 
     // Try to create socket to server, and then connect to it
     for(pIt = pServInfo; pIt != NULL; pIt->ai_next) {
         // create socket to requested server
         if ((server_socket = socket(pServInfo->ai_family, pServInfo->ai_socktype, pServInfo->ai_protocol)) == -1) {
-            printf("Error creating socket to %s\n", URL);
+            printf("Error creating socket to %s\n", *URL);
 
             continue;
         }
 
         // establish connection to server, if no error, send request packet
         if (connect(server_socket, pServInfo->ai_addr, pServInfo->ai_addrlen) == -1) {
-            printf("Connection to %s failed.\n", URL);
+            printf("Connection to %s failed.\n", *URL);
 
             close(server_socket);
 
@@ -861,6 +896,7 @@ int server_connect(char *URL, struct addrinfo *res)
     if(pIt == NULL)
         return -2;
 
+    freeaddrinfo(pServInfo);
     // Return socket file descriptor
     return server_socket;
 }
