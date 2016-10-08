@@ -27,7 +27,7 @@ void sock_process(int sock_id, char *port);
 
 int process_msg(char *buf, char **fixed_req, int *msg_size, int connection);
 
-void get_server_URL(char **addr, char **buf, int *buf_size);
+void get_server_URL(char **addr, char *buf, int *buf_size);
 
 int server_connect(char *URL, struct addrinfo *res);
 
@@ -173,7 +173,7 @@ void sock_process(int sock_id, char *port) {
 
         /** requested server URL                                    */
         char *server_URL;
-        get_server_URL(&server_URL, &request, &msgSize);
+        get_server_URL(&server_URL, request, &msgSize);
         printf("%s\n", server_URL);
 
 
@@ -195,6 +195,7 @@ void sock_process(int sock_id, char *port) {
         IN_OUT = 1;
         msgSize = receive_msg(servSock, IN_OUT, &buf);
 
+        close(servSock);
         //printf("Recvd Response: %i bytes\n%s", msgSize, buf);
 
         /** Check if requested URL contains a "not allowed" word    */
@@ -703,7 +704,7 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
 }
 
 /** Finds the URL for a HTTP GET request            */
-void get_server_URL(char **addr, char **buf, int *buf_size)
+void get_server_URL(char **addr, char *buf, int *buf_size)
 {
     //printf("%s\n", buf);
     regex_t find[1];
@@ -711,10 +712,10 @@ void get_server_URL(char **addr, char **buf, int *buf_size)
     int regresp;
     int start_offset, end_offset;
 
-    char *tmp = *buf;
+    char *tmp = buf;
 
     regcomp(find, "Host:.", 0);
-    regresp = regexec(find, *buf, 1, match, REG_ICASE|REG_EXTENDED);
+    regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
 
     if(regresp == 0) {
         start_offset = match->rm_eo;
@@ -723,7 +724,7 @@ void get_server_URL(char **addr, char **buf, int *buf_size)
 
         //regcomp(find, "\b( HTTP/1.1| HTTP/1.0)\b", 0);
         regcomp(find, "\r\n", 0);
-        regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE|REG_EXTENDED);
+        regresp = regexec(find, buf + start_offset, 1, match, REG_ICASE|REG_EXTENDED);
 
         if(regresp == 0) {
             end_offset = start_offset + match->rm_so;
@@ -761,21 +762,16 @@ void get_server_URL(char **addr, char **buf, int *buf_size)
         } else { return; }
     } else { return; }
 
-    if(tmp[end_offset - 1] == '/')
-        end_offset -= 1;
+    //if(tmp[end_offset - 1] == '/')
+    //    end_offset -= 1;
 
-    int i = start_offset;
+    //int i = start_offset;
 
-    if(tmp[i] == 'w' && tmp[i + 1] == 'w' && tmp[i + 2] == 'w' && tmp[i + 3] == '.') {
+    //if(tmp[i] == 'w' && tmp[i + 1] == 'w' && tmp[i + 2] == 'w' && tmp[i + 3] == '.') {
         *addr = (char *) malloc(end_offset - start_offset);
 
-        memcpy(*addr, *buf + start_offset, end_offset - start_offset);
-    } else {
-        *addr = (char *) malloc(end_offset - start_offset + 4);
-
-        memcpy(*addr, "www.", 4);
-        memcpy(*addr + 4, *buf + start_offset, end_offset - start_offset);
-    }
+        memcpy(*addr, buf + start_offset, end_offset - start_offset);
+    //}
 
 
 #if 0
@@ -800,7 +796,7 @@ void get_server_URL(char **addr, char **buf, int *buf_size)
     //*addr[i - start + 1] = '\0';
 #endif
 
-    printf("num chars: %i\n", end_offset-start_offset);
+    printf("num chars: %i\n", end_offset - start_offset);
     printf("SERVER URL: %s\n", *addr);
 }
 
@@ -817,10 +813,29 @@ int server_connect(char *URL, struct addrinfo *res)
 
     int status;
 
-    if ((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
-        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+    if((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
+        fprintf(stderr, "getaddrinfo error (%s): %s\n", URL, gai_strerror(status));
 
-        return -1;
+        // Retry getaddrinfo() if URL does not start with "www."
+
+        char *tmp_r = URL;
+        if(!(tmp_r[0] == 'w' && tmp_r[1] == 'w' && tmp_r[2] == 'w' && tmp_r[3] == '.')) {
+            int size = sizeof(URL);
+            char tmp[size + 4];
+            memcpy(tmp + 4, URL, size);
+            free(URL);
+            URL = (char *) malloc(size + 4);
+
+            memcpy(URL, "www.", 4);
+            memcpy(URL + 4, tmp + 4, size);
+
+            if((status = getaddrinfo(URL, "http", &hints, &pServInfo)) != 0) {
+                fprintf(stderr, "getaddrinfo error (%s): %s\n", URL, gai_strerror(status));
+                return -1;
+            }
+        }
+
+
     }
 
     // Try to create socket to server, and then connect to it
