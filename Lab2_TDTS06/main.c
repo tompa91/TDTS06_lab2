@@ -16,20 +16,33 @@
 #define SEGSIZE_est 1500    // size of response segments
 //#define GETREQSIZE  1500
 
-char *REDIRECT_MSG_URL      = "HTTP/1.1 302 Found\r\nLocation: http://www.ida.liu.se/~TDTS04/labs/2011/ass2/error1.html\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 107\r\nConnection: close\r\n\r\n<head><title>URL NOT approved!</title></head>\n<body><h1>The URL you have requested is VERY BAD.</h1><body>";
-char *REDIRECT_MSG_CONTENT  = "HTTP/1.1 302 Found\r\nLocation: http://www.ida.liu.se/~TDTS04/labs/2011/ass2/error2.html\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 120\r\nConnection: close\r\n\r\n<head><title>Content NOT approved!</title></head>\n<body><h1>You have requested a site with VERY BAD content.</h1><body>";
+typedef enum {
+    BAD_WORD,
+    CODE_30X_RESP,
+    DEFAULT
+} STATUS;
+
+char *REDIRECT_MSG_URL      = "HTTP/1.1 302 Found\r\nLocation: http://www.ida.liu.se/~TDTS04/labs/2011/ass2/error1.html\r\nContent-Length: 173\r\nConnection: close\r\nContent-Type: text/html; charset=iso-8859-1\r\n\r\n<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML 2.0//EN'>\n<html><head>\n<title>URL NOT approved!</title>\n</head><body>\n<h1>The URL you have requested is VERY BAD.</h1>\n</body></html>\n";
+
+char *REDIRECT_MSG_CONTENT  = "HTTP/1.1 302 Found\r\nLocation: http://www.ida.liu.se/~TDTS04/labs/2011/ass2/error2.html\r\nContent-Length: 188\r\nConnection: close\r\nContent-Type: text/html; charset=iso-8859-1\r\n\r\n<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML 2.0//EN'>\n<html><head>\n<title>Content NOT approved!</title>\n</head><body>\n<h1>You have requested a site with VERY BAD content.</h1>\n</body></html>\n";
+
+const int REDIRECT_URL_SIZE = 350;
+
+const int REDIRECT_CONTENT_SIZE = 363;
 
 char *not_allowed = "[N|n]orrk.*ping|[S|s]ponge[B|b]ob|(Britney Spears)|(Paris Hilton)";
 
 int receive_msg(int sock, int dir, char **buf);
 
-void sock_process(int sock_id, char *port);
+void sock_process(int sock_id);
 
-int process_msg(char *buf, char **fixed_req, int *msg_size, int connection);
+STATUS process_msg(char *buf, char **fixed_req, int *msg_size, int connection, int dir);
 
 int get_server_URL(char **addr, char *buf, int *buf_size);
 
 int server_connect(char **URL, int *URL_SIZE);
+
+void request_remake(char **req, int *req_size, char *URL, int URL_size);
 
 // Response segment list structure
 struct segNode {
@@ -108,7 +121,7 @@ int main(void) {
 
             printf("\nNew pid!!!!\n");
 
-            sock_process(new_fd, myPort);
+            sock_process(new_fd);
 
             printf("\nSITE IS FINISHED!!!\n");
 
@@ -128,11 +141,13 @@ int main(void) {
 
 //typedef char* not_allowed[4] = {"SpongeBob", "Britney Spears", "Paris Hilton", "Norrk.ping"};
 
-void sock_process(int sock_id, char *port) {
-    int servSock;
-    char *request, *response;
-    // IN_OUT = 0: Indicates msg should be outgoing (to server)
-    // IN_OUT = 1: msg should go to client
+void sock_process(int sock_id) {
+    int servSock, sent_bytes;
+    char *request, *response_or_URL;
+    STATUS status;
+
+    // IN_OUT = 0: Proxy is processing a message from client
+    // IN_OUT = 1: ---------------- | | ------------- server
     int IN_OUT;
 
     //char *node = "127.0.0.1";
@@ -144,82 +159,155 @@ void sock_process(int sock_id, char *port) {
 
         char *buf;
 
-        int msgSize;
+        int reqSize, rspSize;
+
+        int moved_flag = 0;
 
         IN_OUT = 0;
-        msgSize = receive_msg(sock_id, IN_OUT, &buf);
+        reqSize = receive_msg(sock_id, IN_OUT, &buf, &moved_flag);
 
+        // If URL has a BAD word, redirect accordingly
+#if 0
+        if(msgSize == -2) {
+            send(sock_id, REDIRECT_MSG_URL, sizeof(REDIRECT_MSG_URL), 0);
+            free(buf);
+            free(request);
+            continue;
+        }
+#endif
         //msgSize = recv(sock_id, buf, sizeof(buf), 0);
 
-        printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, msgSize, buf);
+        printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, reqSize, buf);
 
-        if(msgSize == 0 || msgSize < 0) {
+        if(reqSize == 0 || reqSize == -1) {
             printf("\n\n\nYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAS\n\n\n");
             free(buf);
 
             return;
         }
 
-        int amount;
-
         /** Check if requested URL contains a "not allowed" word    */
         /** Change to Connection: close if need be                  */
         /** URL REDIRECT if URL is bad and continue to loop end     */
-        if(process_msg(buf, &request, &msgSize, 0)) {
-            amount = send(sock_id, REDIRECT_MSG_URL, sizeof(REDIRECT_MSG_URL), 0);
+        status = process_msg(buf, &request, &reqSize, 0, IN_OUT);
+
+
+
+        /*amount = send(sock_id, REDIRECT_MSG_URL, sizeof(REDIRECT_MSG_URL), 0);
             free(buf);
+            free(request);
             continue;
-        }
+        */
 
         free(buf);
 
-        /** requested server URL                                    */
         char *server_URL;
-        int URL_SIZE = get_server_URL(&server_URL, request, &msgSize);
 
-        printf("%s\n", server_URL);
+        // if no BAD URL was found, communicate with requested server
+        if(status == DEFAULT) {
 
-        if(URL_SIZE == -1)
-            printf("URL could not be found. Very strange!\n");
+            /** get requested server URL                                    */
+            int URL_SIZE = get_server_URL(&server_URL, request, &reqSize);
 
-        /** Connect to requested URL                                */
-        if((servSock = server_connect(&server_URL, &URL_SIZE)) == -1) {
-            printf("getaddrinfo ERROR to %s\n", server_URL);
+            printf("%s\n", server_URL);
+
+            if (URL_SIZE == -1)
+                printf("URL could not be found. Very strange!\n");
+
+            do {
+                /** Connect to requested URL                                */
+                if ((servSock = server_connect(&server_URL, &URL_SIZE)) == -1) {
+                    printf("getaddrinfo ERROR to %s\n", server_URL);
+                } else if (servSock == -2) {
+                    printf("Connection ERROR\n");
+                }
+
+                printf("Server socket ID: %i, URL: %s\n", servSock, server_URL);
+
+
+                sent_bytes = send(servSock, request, reqSize, 0);
+                printf("%i\n", sent_bytes);
+
+                // We might need the GET Request anymore
+                //free(message);
+
+
+                /** Receive response from server */
+                IN_OUT = 1;
+                rspSize = receive_msg(servSock, IN_OUT, &buf);
+
+#if 0
+                // If CONTENT has a BAD word, redirect accordingly
+                if (msgSize == -3) {
+                    send(sock_id, REDIRECT_MSG_CONTENT, sizeof(REDIRECT_MSG_CONTENT), 0);
+                    free(buf);
+                    free(response);
+                    continue;
+                }
+#endif
+                printf("RESPONSE SIZE from URL: %s, %i bytes\n\n", server_URL, rspSize);
+                printf("UNFIXED Response:\n%s\n", buf);
+                close(servSock);
+
+
+                //printf("Recvd Response: %i bytes\n%s", msgSize, buf);
+
+
+                /** Check if requested URL contains a "not allowed" word            */
+                /** Change to Connection: keep-alive if need be                     */
+                /** CONTENT REDIRECT if CONTENT is bad and continue to loop end     */
+                /** Check if the response has status code 30x (Redirect)            */
+                status = process_msg(buf, &response_or_URL, &rspSize, 1, IN_OUT);
+                free(buf);
+
+                if(status == CODE_30X_RESP) {
+                    free(server_URL);
+
+                    server_URL = (char *) malloc(rspSize);
+                    memcpy(server_URL, response_or_URL, rspSize);
+
+                    request_remake(&request, &reqSize, server_URL, rspSize);
+
+                }
+
+
+
+                /*amount = send(sock_id, REDIRECT_MSG_CONTENT, sizeof(REDIRECT_MSG_CONTENT), 0);
+                free(buf);
+                free(response);
+                continue;
+            */
+
+
+
+                //if(!status)
+                //printf("Fixed Response from %s:\n%s\n", server_URL, message);
+            }while(status == CODE_30X_RESP);
         }
-        else if(servSock == -2) {
-            printf("Connection ERROR\n");
+#if 0
+        if(moved_flag) {
+            //close(sock_id);
+            send(sock_id, buf, msgSize, 0);
+            free(buf);
+            break;
+        }
+#endif
+        switch(status) {
+            case 0:
+                sent_bytes = send(sock_id, response_or_URL, msgSize, 0);
+                free(response_or_URL);
+                break;
+
+            case 1:
+                sent_bytes = send(sock_id, request, msgSize, 0);
+                free(request);
+                break;
         }
 
-        printf("Server socket ID: %i, URL: %s\n", servSock, server_URL);
 
-        int sent_bytes = send(servSock, request, msgSize, 0);
-        printf("%i\n", sent_bytes);
-        //printf("SIZE OF REQ: %i\n", msgSize);
-        /** Receive response from server */
-        IN_OUT = 1;
-        msgSize = receive_msg(servSock, IN_OUT, &buf);
 
-        printf("RESPONSE SIZE from URL: %s, %i bytes\n\n", server_URL, msgSize);
-        printf("UNFIXED Response:\n%s\n", buf);
-        close(servSock);
-        //printf("Recvd Response: %i bytes\n%s", msgSize, buf);
+        printf("\nSent %i bytes to broauser!\n\n", sent_bytes);
 
-        /** Check if requested URL contains a "not allowed" word    */
-        /** Change to Connection: keep-alive if need be                  */
-        /** CONTENT REDIRECT if CONTENT is bad and continue to loop end     */
-        if(process_msg(buf, &response, &msgSize, 1)) {
-            amount = send(sock_id, REDIRECT_MSG_CONTENT, sizeof(REDIRECT_MSG_CONTENT), 0);
-            continue;
-        }
-
-        free(buf);
-
-        printf("Fixed Response from %s:\n%s\n", server_URL, response);
-
-        sent_bytes = send(sock_id, response, msgSize, 0);
-
-        free(response);
-        free(request);
 
 
 
@@ -499,9 +587,13 @@ int receive_msg(int sock, int dir, char **buf)
     regex_t find[1];
     regmatch_t match[1];
 
+    printf("IN DA RECV FUNC\n");
+
     struct segNode *iter = List;
     while((iter->SEGSIZE = recv(sock, iter->buf, SEGSIZE_est, 0)) > 0) {
         full_size += iter->SEGSIZE;
+
+        printf("IN segment loop\n");
 
         if(dir == 0) {
             regcomp(find, "\r\n\r\n", 0);
@@ -527,7 +619,7 @@ int receive_msg(int sock, int dir, char **buf)
         return -1;
     }
 
-    *buf = (char *) malloc(full_size + 1);
+    *buf = (char *) malloc(full_size);
 
     iter = List;
 
@@ -542,24 +634,52 @@ int receive_msg(int sock, int dir, char **buf)
         free(deleteNode);
     }
 
+    /*if(dir == 0) {
+        regcomp(find, not_allowed, 0);
+        regresp = regexec(find, *buf, 1, match, REG_ICASE|REG_EXTENDED);
+
+        if(regresp == 0) {
+            printf("NEJNEJNEJNEJNEJ\n");
+            free(*buf);
+            full_size = sizeof(REDIRECT_MSG_URL);
+            *buf = (char *) malloc(full_size);
+            memcpy(*buf, REDIRECT_MSG_URL, full_size);
+            return -2;
+        }
+    }*/
+
     if(dir == 1) {
         int start_offset, end_offset;
         char tmp[full_size];
 
-        regcomp(find, "Location:.http://", 0);
-        regresp = regexec(find, *buf, 1, match, REG_ICASE|REG_EXTENDED);
+        // Check if there is any BAD CONTENT in the response
+        /*regcomp(find, not_allowed, REG_ICASE | REG_EXTENDED);
+        regresp = regexec(find, *buf, 1, match, 0);
+
+        if(regresp == 0) {
+            printf("NEJNEJNEJNEJNEJ\n");
+            free(*buf);
+            full_size = sizeof(REDIRECT_MSG_CONTENT);
+            *buf = (char *) malloc(full_size);
+            memcpy(*buf, REDIRECT_MSG_CONTENT, full_size);
+            return -2;
+        }*/
+
+
+        regcomp(find, "Location:.http://", REG_ICASE | REG_EXTENDED);
+        regresp = regexec(find, *buf, 1, match, 0);
 
         if(regresp == 0) {
             start_offset = match->rm_eo;
             printf("HEJ\n");
-            regcomp(find, "\r\n", 0);
-            regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE | REG_EXTENDED);
+            regcomp(find, "\r\n", REG_ICASE | REG_EXTENDED);
+            regresp = regexec(find, *buf + start_offset, 1, match, 0);
 
             if (regresp == 0) {
                 end_offset = start_offset + match->rm_so;
                 printf("HEJ2\n");
-                regcomp(find, "http://", 0);
-                regresp = regexec(find, *buf + start_offset, 1, match, REG_ICASE | REG_EXTENDED);
+                regcomp(find, "http://", REG_ICASE | REG_EXTENDED);
+                regresp = regexec(find, *buf + start_offset, 1, match, 0);
 
                 if(regresp == 0) {
                     int new_end = start_offset + match->rm_so;
@@ -567,12 +687,17 @@ int receive_msg(int sock, int dir, char **buf)
                         printf("HEJ3\n");
                         memcpy(tmp, *buf, full_size);
                         free(*buf);
-                        *buf = (char *) malloc(full_size - (end_offset - new_end));
+                        *buf = (char *) malloc(full_size - (end_offset - new_end + 1));
+
+                        char *tmp2 = *buf;
 
                         memcpy(*buf, tmp, new_end);
-                        memcpy(*buf + new_end, tmp + end_offset, full_size - end_offset);
+                        tmp2[new_end] = '/';
+                        memcpy(*buf + new_end + 1, tmp + end_offset, full_size - end_offset);
 
                         full_size -= (end_offset - new_end);
+                        full_size += 1;
+                        // EVENTUELLT ÄNDRA TILL CLOSE???????
                     }
                 }
 #if 0
@@ -608,7 +733,7 @@ int receive_msg(int sock, int dir, char **buf)
         }
     }
 
-    temp[full_size] = '\0';
+    //temp[full_size] = '\0';
 
     // if inc msg is a request
     /*if (dir == 0) {
@@ -647,29 +772,73 @@ int receive_msg(int sock, int dir, char **buf)
     Eventually changes connection type.
     Connection = 0 will change to close, = 1 will change to keep-alive.
     Returns 1 if it was a bad msg.    */
-int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
+STATUS process_msg(char *buf, char **fixed_msg, int *msg_size, int connection, int dir)
 {
     int j, k;
 
     char *temp1;
     char *temp2;
+    int start_offset, end_offset;
 
     regex_t find[1];
     regmatch_t match[1];
-    printf("%s\n", buf);
+    //printf("%s\n", buf);
 
     //regcomp(find, not_allowed, 0);
     int regresp;// = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
 
-    /*if(regresp == 0) {
-        printf("NEJNEJNEJNEJNEJ\n");
-        return 1;
-    }*/
+    regcomp(find, "HTTP/1.[1|0] 30.", REG_ICASE | REG_EXTENDED);
 
+    if(!regexec(find, buf, 0, NULL, 0)) {
+
+        regcomp(find, "Location:.http://", REG_ICASE | REG_EXTENDED);
+
+        if(!regexec(find, buf, 1, match, 0)) {
+            start_offset = match->rm_eo;
+
+            regcomp(find, "\r\n", REG_ICASE | REG_EXTENDED);
+
+            if (!regexec(find, buf + start_offset, 1, match, 0)) {
+                end_offset = match->rm_so;
+
+                *msg_size = end_offset - start_offset;
+                *fixed_msg = (char *) malloc(*msg_size);
+                memcpy(*fixed_msg, buf + start_offset, *msg_size);
+
+                return CODE_30X_RESP;
+            }
+        }
+    }
+
+    regcomp(find, not_allowed, REG_ICASE|REG_EXTENDED);
+    regresp = regexec(find, buf, 0, NULL, 0);
+
+    if(regresp == 0) {
+        if (dir == 0) {
+            *msg_size = REDIRECT_URL_SIZE;
+            *fixed_msg = (char *) malloc(*msg_size);
+            memcpy(*fixed_msg, REDIRECT_MSG_URL, *msg_size);
+
+            return BAD_WORD;
+        } else {
+            *msg_size = REDIRECT_CONTENT_SIZE;
+            *fixed_msg = (char *) malloc(*msg_size);
+            memcpy(*fixed_msg, REDIRECT_MSG_CONTENT, *msg_size);
+
+            return BAD_WORD;
+        }
+    }
+
+#if 0
+    if(regresp == 0) {
+        printf("NEJNEJNEJNEJNEJ\n");
+        return -1;
+    }
+#endif
     // if change connection to close:
     if(connection == 0) {
-        regcomp(find, "[K|k]eep.[A|a]live", 0);
-        regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
+        regcomp(find, "[K|k]eep.[A|a]live", REG_ICASE|REG_EXTENDED);
+        regresp = regexec(find, buf, 1, match, 0);
 
         if (regresp == 0) {
             *fixed_msg = (char *) malloc(*msg_size - 5);
@@ -694,9 +863,9 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
     }
     // if change connection to keep-alive:
     else if(connection == 1) {
-        regcomp(find, "Connection..[C|c]lose", 0);
+        regcomp(find, "Connection..[C|c]lose", REG_ICASE|REG_EXTENDED);
         /** KOLLA UPP REG_ICASE OCH REG_EXTENDED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-        regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
+        regresp = regexec(find, buf, 1, match, 0);
 
         if (regresp == 0) {
             printf("\nClose hittades!\n\n");
@@ -731,7 +900,7 @@ int process_msg(char *buf, char **fixed_msg, int *msg_size, int connection)
     printf("%s\n", *fixed_msg);
 
 
-    return 0;
+    return DEFAULT;
 }
 
 /** Finds the URL for a HTTP GET request            */
@@ -745,17 +914,18 @@ int get_server_URL(char **addr, char *buf, int *buf_size)
 
     char *tmp;
 
-    regcomp(find, "Host:.", 0);
-    regresp = regexec(find, buf, 1, match, REG_ICASE|REG_EXTENDED);
+    regcomp(find, "Host:.", REG_ICASE|REG_EXTENDED);
+    regresp = regexec(find, buf, 1, match, 0);
 
     if(regresp == 0) {
         start_offset = match->rm_eo;
 
         printf("START OFFSET: %i\n", start_offset);
 
-        //regcomp(find, "\b( HTTP/1.1| HTTP/1.0)\b", 0);
-        regcomp(find, "\r\n", 0);
-        regresp = regexec(find, buf + start_offset, 1, match, REG_ICASE|REG_EXTENDED);
+        //ifall URL är fucked up kan något behövas här!
+
+        regcomp(find, "\r\n", REG_ICASE|REG_EXTENDED);
+        regresp = regexec(find, buf + start_offset, 1, match, 0);
 
         if(regresp == 0) {
             end_offset = start_offset + match->rm_so;
@@ -899,4 +1069,49 @@ int server_connect(char **URL, int *URL_SIZE)
     freeaddrinfo(pServInfo);
     // Return socket file descriptor
     return server_socket;
+}
+
+void request_remake(char **req, int *req_size, char *URL, int URL_size)
+{
+    regex_t find[1];
+    regmatch_t match[1];
+    int regresp, Gline_so, Gline_eo, Hline_so, Hline_eo;
+
+    char temp[*req_size];
+    memcpy(temp, *req, *req_size);
+
+    regcomp(find, "GET.http://", REG_ICASE | REG_EXTENDED);
+
+    if(!regexec(find, *req, 1, match, 0)) {
+        Gline_so = match->rm_eo;
+        regcomp(find, ".HTTP/1.[0|1]", REG_ICASE | REG_EXTENDED);
+
+        if(!regexec(find, *req, 1, match, 0)) {
+            Gline_eo = match->rm_so;
+        }
+    }
+
+    regcomp(find, "Host:.", REG_ICASE | REG_EXTENDED);
+
+    if(!regexec(find, *req, 1, match, 0)) {
+        Hline_so = match->rm_eo;
+        regcomp(find, "\r\n", REG_ICASE | REG_EXTENDED);
+
+        if(!regexec(find, *req, 1, match, 0)) {
+            Hline_eo = match->rm_so;
+
+            free(*req);
+
+            *req = (char *) malloc(*req_size - (Gline_eo - Gline_so + URL_size) - (Hline_eo - Hline_so + URL_size));
+
+            memcpy(*req + Gline_so, URL, URL_size);
+            memcpy(*req + Gline_so + URL_size, temp + Gline_eo, Hline_so - Gline_eo);
+            memcpy(*req + Gline_so + URL_size + (Hline_so - Gline_eo), URL, URL_size);
+            memcpy(*req + Gline_so + URL_size + (Hline_so - Gline_eo) + URL_size, temp + Hline_eo, *req_size - Hline_eo);
+
+            *req_size = *req_size - (Gline_eo - Gline_so + URL_size) - (Hline_eo - Hline_so + URL_size);
+        } else
+            printf("Hittade inte \ r \ n\n");
+    } else
+        printf("Hittade inte Host:\n");
 }
