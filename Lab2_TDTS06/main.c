@@ -16,9 +16,17 @@
 #define SEGSIZE_est 1500    // size of response segments
 //#define GETREQSIZE  1500
 
+/** enum STATUS:
+ *  contains status messages for various situations:
+ *
+ *  BAD_MSG         A BAD word was found in either content or URL
+ *  CONTENT_SEARCH  The present response has text and will be searched for bad words
+ *  ERROR           NOT USED
+ *  DEFAULT         Indicates that a message is ok and ready to send
+ */
 typedef enum {
-    BAD_URL,
-    BAD_CONTENT,
+    BAD_MSG,
+    CONTENT_SEARCH,
     ERROR,
     DEFAULT
 } STATUS;
@@ -31,13 +39,13 @@ const int REDIRECT_URL_SIZE = 350;
 
 const int REDIRECT_CONTENT_SIZE = 363;
 
-char *not_allowed = "[N|n]orrk.*ping|[S|s]ponge[B|b]ob|(Britney Spears)|(Paris Hilton)";
+char *not_allowed = "[N|n]orrk.*ping|[S|s]ponge[B|b]ob|([B|b]ritney.[S|s]pears)|([P|p]aris.[H|h]ilton)";
 
-int receive_msg(int sock, int dir, char **buf);
+int receive_msg(int sock, int dir, char **buf, STATUS *status);
 
 void sock_process(int sock_id);
 
-STATUS process_msg(char *buf, char **fixed_req, int *msg_size, int connection, int dir);
+STATUS process_msg(char *buf, char **fixed_req, int *msg_size, int connection, int dir, STATUS status);
 
 int get_server_URL(char **addr, char *buf, int *buf_size);
 
@@ -45,13 +53,23 @@ int server_connect(char **URL, int *URL_SIZE);
 
 void request_remake(char **req, int *req_size, char *URL, int URL_size);
 
-// Response segment list structure
+/** struct segNode
+ *  This structure is used for a singly linked list
+ *  A node will hold a http message segment and its size
+ *
+ */
 struct segNode {
     char buf[SEGSIZE_est];
     int SEGSIZE;
     struct segNode *next;
 };
 
+/** sigchld_handler()
+ *  used to kill Zombie processes
+ *  
+ *
+ * @param s
+ */
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -140,8 +158,8 @@ int main(void) {
  * @param sock_id
  */
 void sock_process(int sock_id) {
-    int servSock, sent_bytes;
-    char *request, *response;
+    int servSock, sent_bytes, msgSize;
+    char *message;
     STATUS status;
 
     // IN_OUT = 0: Proxy is processing a message from client
@@ -154,16 +172,14 @@ void sock_process(int sock_id) {
 
         char *buf;
 
-        int reqSize, rspSize;
-
         // Receive request from browser
         IN_OUT = 0;
-        reqSize = receive_msg(sock_id, IN_OUT, &buf);
+        msgSize = receive_msg(sock_id, IN_OUT, &buf, &status);
 
-        printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, reqSize, buf);
+        printf("SOCKET: %i GET request Message size: %i\n\n%s", sock_id, msgSize, buf);
 
         // Terminate process if browser close connection
-        if(reqSize == 0 || reqSize == -1) {
+        if(msgSize == 0 || msgSize == -1) {
             printf("\n\nBrowser closed connection on socket: %i\n\n\n", sock_id);
             free(buf);
 
@@ -173,7 +189,7 @@ void sock_process(int sock_id) {
         /*  Check if requested URL contains a "not allowed" word
             Change to Connection: close if need be
             URL REDIRECT if URL is bad and continue to loop end     */
-        status = process_msg(buf, &request, &reqSize, 0, IN_OUT);
+        status = process_msg(buf, &message, &msgSize, 0, IN_OUT, status);
 
         // Content in "buf" no longer needed. The data now lies in "request"
         free(buf);
@@ -185,7 +201,7 @@ void sock_process(int sock_id) {
         if(status == DEFAULT) {
 
             /** get requested server URL                                    */
-            int URL_SIZE = get_server_URL(&server_URL, request, &reqSize);
+            int URL_SIZE = get_server_URL(&server_URL, message, &msgSize);
 
             printf("%s\n", server_URL);
 
@@ -207,29 +223,30 @@ void sock_process(int sock_id) {
 
 
             // Send request to server
-            sent_bytes = send(servSock, request, reqSize, 0);
+            sent_bytes = send(servSock, message, msgSize, 0);
             printf("%i\n", sent_bytes);
 
+            free(message);
             // We might need the GET Request
             //free(message);
 
 
             // Receive response from server
             IN_OUT = 1;
-            rspSize = receive_msg(servSock, IN_OUT, &buf);
+            msgSize = receive_msg(servSock, IN_OUT, &buf, &status);
 
             // We don't need server socket (servSock) anymore since the response is collected
             close(servSock);
 
 
-            printf("RESPONSE SIZE from URL: %s, %i bytes\n\n", server_URL, rspSize);
+            printf("RESPONSE SIZE from URL: %s, %i bytes\n\n", server_URL, msgSize);
             printf("UNFIXED Response:\n%s\n", buf);
 
 
             /*  Check if requested URL contains a "not allowed" word
                 Change to Connection: keep-alive if need be
                 CONTENT REDIRECT if CONTENT is bad and continue to loop end     */
-            status = process_msg(buf, &response, &rspSize, 1, IN_OUT);
+            status = process_msg(buf, &message, &msgSize, 1, IN_OUT, status);
 
             // buf is no longer needed. Now using "response" instead
             free(buf);
@@ -251,24 +268,13 @@ void sock_process(int sock_id) {
 
 
         }
-        /// ÄNDA DETTA KANSKE. BEHÖVER EGENTLIGEN ENDAST "message" OCH EN ENDA send()
-        switch(status) {
-            case DEFAULT:
-                sent_bytes = send(sock_id, response, rspSize, 0);
-                break;
 
-            case BAD_URL:
-                sent_bytes = send(sock_id, request, reqSize, 0);
-                break;
+        // Send response to client (browser)
+        sent_bytes = send(sock_id, message, msgSize, 0);
 
-            case BAD_CONTENT:
-                sent_bytes = send(sock_id, response, rspSize, 0);
-                break;
-        }
 
         // We don't need the response or request anymore
-        free(response);
-        free(request);
+        free(message);
 
         printf("\nSent %i bytes to broauser!\n\n", sent_bytes);
     }
@@ -286,7 +292,7 @@ void sock_process(int sock_id) {
  * @param buf
  * @return
  */
-int receive_msg(int sock, int dir, char **buf)
+int receive_msg(int sock, int dir, char **buf, STATUS *status)
 {
     int full_size = 0, offset = 0, regresp;
     struct segNode *List = (struct segNode *) malloc(sizeof(struct segNode));
@@ -304,10 +310,8 @@ int receive_msg(int sock, int dir, char **buf)
         printf("IN segment loop\n");
 
         if(dir == 0) {
-            regcomp(find, "\r\n\r\n", 0);
-            regresp = regexec(find, iter->buf, 1, match, REG_ICASE | REG_EXTENDED);
-
-            if(regresp == 0) {
+            regcomp(find, "\r\n\r\n", REG_ICASE | REG_EXTENDED);
+            if(!regexec(find, iter->buf, 1, match, 0)) {
                 break;
             }
         }
@@ -343,6 +347,8 @@ int receive_msg(int sock, int dir, char **buf)
         free(deleteNode);
     }
 
+    printf("RAW DATA:\n%s\n\n", *buf);
+
     // If buf contains a Redirect response, eventually fix weird "Location:" line
     if(dir == 1) {
         int start_offset, end_offset;
@@ -372,6 +378,11 @@ int receive_msg(int sock, int dir, char **buf)
 
                         regcomp(find, "\r\n\r\n", REG_ICASE | REG_EXTENDED);
 
+                        if(!regexec(find, *buf + start_offset, 1, match, 0)) {
+                            char *temp = *buf;
+                            temp[match->rm_eo] = '\0';
+                        }
+
                         //memmove(tmp, *buf, full_size);
                         //free(*buf);
                         //*buf = (char *) malloc(full_size - (end_offset - new_end));
@@ -384,80 +395,33 @@ int receive_msg(int sock, int dir, char **buf)
 
                         //full_size -= (end_offset - new_end);
                         //full_size += 1;
-
-                        if(!regexec(find, *buf + start_offset, 1, match, 0)) {
-                            char *temp = *buf;
-                            temp[match->rm_eo] = '\0';
-                        }
                     }
                 }
-#if 0
-                if (!((end_offset - start_offset) % 2)) {
-                    int start_off2 = start_offset + 4;
-                    int i;
-                    int mid = (end_offset - start_off2) / 2;
+            }
+        } else {
+            regcomp(find, "\r\n\r\n", REG_ICASE | REG_EXTENDED);
 
-                    printf("YAS\n");
-                    printf("Mid: %i\n%s\n\n\n%s\n\n", mid, *buf + start_off2, *buf + start_off2 + mid);
+            if(!regexec(find, *buf, 1, match, 0)) {
+                int temp_size = match->rm_eo;
+                char tmp[temp_size + 1];
 
-                    for (i = 0; i < mid; i++) {
-                        if (tmp[start_off2 + i] != tmp[start_off2 + mid + i])
-                            break;
-                    }
+                memcpy(tmp, *buf, temp_size);
 
-                    printf("FUCK\n");
-
-                    if (i == mid - 1) {
-                        char temp[full_size];
-                        memcpy(temp, *buf, full_size);
-                        free(*buf);
-                        *buf = (char *) malloc(full_size - mid);
-                        memcpy(*buf, temp, start_off2 + mid);
-                        memcpy(*buf + start_off2 + mid, temp + end_offset, full_size - end_offset);
-
-                        end_offset = start_off2 + mid;
-                        full_size -= mid;
-                    }
+                tmp[temp_size] = '\0';
+                printf("\nInnan REGCOMP\n\n");
+                regcomp(find, "(([C|c]ontent.[T|t]ype:.).*(text).*(\r\n))", REG_ICASE | REG_EXTENDED);
+                printf("\nInnan REGEXEC\n\n");
+                if(!regexec(find, tmp, 0, NULL, 0)) {
+                    printf("\nCONTENT_SEARCH Active\n\n");
+                    status = CONTENT_SEARCH;
                 }
-#endif
             }
         }
     }
 
-    //temp[full_size] = '\0';
-
-    // if inc msg is a request
-    /*if (dir == 0) {
-        regcomp(find, "\r\n\r\n", 0);
-        regresp = regexec(find, List->buf, 1, match, REG_ICASE | REG_EXTENDED);
-
-        if (regresp == 0) {
-            header_end = match->rm_eo;
-            *buf = (char *) malloc(header_end);
-            memcpy(*buf, List->buf, header_end);
-            printf("found Header end!\n");
-        }
-    }*/
-    // if inc msg is a request
-    /* } else {
-        if((full_size = recv(sock, List->buf, SEGSIZE_est, 0)) > 0) {
-            regcomp(find, "\r\n\r\n", 0);
-            regresp = regexec(find, List->buf, 1, match, REG_ICASE|REG_EXTENDED);
-
-            if(regresp == 0) {
-                header_end = match->rm_eo;
-                *buf = (char *) malloc(header_end);
-                memcpy(*buf, List->buf, header_end);
-            }
-
-            free(List);
-        }
-        else if(full_size == 0)
-            return -2;*/
-
-
     return full_size;
 }
+
 
 
 /**
@@ -474,10 +438,11 @@ int receive_msg(int sock, int dir, char **buf)
  * @param msg_size
  * @param connection
  * @param dir
+ * @param status
  * @return
  */
 
-STATUS process_msg(char *buf, char **fixed_msg, int *msg_size, int connection, int dir)
+STATUS process_msg(char *buf, char **fixed_msg, int *msg_size, int connection, int dir, STATUS status)
 {
     int j, k;
 
@@ -489,66 +454,41 @@ STATUS process_msg(char *buf, char **fixed_msg, int *msg_size, int connection, i
     regmatch_t match[1];
 
     int regresp;
-#if 0
-    regcomp(find, "HTTP/1.[1|0] 30.", REG_ICASE | REG_EXTENDED);
 
-    if(!regexec(find, buf, 0, NULL, 0)) {
 
-        regcomp(find, "Location:.http://", REG_ICASE | REG_EXTENDED);
+    if (dir == 0) {
+        // Check for bad URL
+        // Return STATUS = BAD_MSG if found
+        regcomp(find, not_allowed, REG_ICASE|REG_EXTENDED);
 
-        if(!regexec(find, buf, 1, match, 0)) {
-            start_offset = match->rm_eo;
+        if(!regexec(find, buf, 0, NULL, 0)) {
 
-            regcomp(find, "\r\n", REG_ICASE | REG_EXTENDED);
-
-            if (!regexec(find, buf + start_offset, 1, match, 0)) {
-                end_offset = start_offset + match->rm_so;
-
-                *msg_size = end_offset - start_offset;
-
-                temp1 = buf;
-
-                if(temp1[end_offset - 1] == '/')
-                    *msg_size -= 1;
-                printf("start : %i\n", start_offset);
-                printf("end : %i\n", end_offset);
-                *fixed_msg = (char *) malloc(18/**((unsigned int *) msg_size)*/);
-                printf("%i\n", *msg_size);
-
-                memcpy(*fixed_msg, buf + start_offset, 18);
-
-                printf("%s\n", *fixed_msg);
-                return CODE_30X_RESP;
-            }
-        }
-    }
-#endif
-
-    // Check for bad URL and content
-    // Return STATUS = BAD_MSG if found
-    regcomp(find, not_allowed, REG_ICASE|REG_EXTENDED);
-    regresp = regexec(find, buf, 0, NULL, 0);
-
-    if(regresp == 0) {
-        if (dir == 0) {
             *msg_size = REDIRECT_URL_SIZE;
 
             *fixed_msg = (char *) malloc(*msg_size);
 
             memmove(*fixed_msg, REDIRECT_MSG_URL, *msg_size);
 
-            return BAD_URL;
+            return BAD_MSG;
+        }
+    // Check for bad content only if the Content-Type is text/html and dir = 1
+    // Return status = BAD_MSG if bad word found
+    } else if(dir == 1 && status == CONTENT_SEARCH) {
 
-        } else {
+        regcomp(find, not_allowed, REG_ICASE|REG_EXTENDED);
+
+        if(!regexec(find, buf, 0, NULL, 0)) {
+
             *msg_size = REDIRECT_CONTENT_SIZE;
 
             *fixed_msg = (char *) malloc(*msg_size);
 
             memmove(*fixed_msg, REDIRECT_MSG_CONTENT, *msg_size);
 
-            return BAD_CONTENT;
+            return BAD_MSG;
         }
     }
+
 
     // Search for Connection: keep-alive in message. If found, change to close
     if(connection == 0) {
@@ -645,35 +585,7 @@ int get_server_URL(char **addr, char *buf, int *buf_size)
             end_offset = start_offset + match->rm_so;
 
             printf("END OFFSET: %i\n", end_offset);
-#if 0
-            if(!((end_offset - start_offset) % 2)) {
-                int start_off2 = start_offset + 4;
-                int i;
-                int mid = (end_offset - start_off2) / 2;
 
-                printf("YAS\n");
-                printf("Mid: %i\n%s\n\n\n%s\n\n", mid, *buf + start_off2, *buf + start_off2 + mid);
-
-                for(i = 0; i < mid; i++) {
-                    if(tmp[start_off2 + i] != tmp[start_off2 + mid + i])
-                        break;
-                }
-
-                printf("FUCK\n");
-
-                if(i == mid - 1) {
-                    char temp[*buf_size];
-                    memcpy(temp, *buf, *buf_size);
-                    free(*buf);
-                    *buf = (char *) malloc(*buf_size - mid);
-                    memcpy(*buf, temp, start_off2 + mid);
-                    memcpy(*buf + start_off2 + mid, temp + end_offset, *buf_size - end_offset);
-
-                    end_offset = start_off2 + mid;
-                    *buf_size -= mid;
-                }
-            }
-#endif
         } else { return -1; }
     } else { return -1; }
 
@@ -693,6 +605,7 @@ int get_server_URL(char **addr, char *buf, int *buf_size)
     // Return the size of the URL
     return (end_offset - start_offset);
 }
+
 
 /**Establishes connection to requested server:
  * Performes getaddrinfo
@@ -770,49 +683,3 @@ int server_connect(char **URL, int *URL_SIZE)
     // Return socket file descriptor
     return server_socket;
 }
-#if 0
-void request_remake(char **req, int *req_size, char *URL, int URL_size)
-{
-    regex_t find[1];
-    regmatch_t match[1];
-    int Gline_so, Gline_eo, Hline_so, Hline_eo;
-
-    char temp[*req_size];
-    memcpy(temp, *req, *req_size);
-
-    regcomp(find, "GET.http://", REG_ICASE | REG_EXTENDED);
-
-    if(!regexec(find, *req, 1, match, 0)) {
-        Gline_so = match->rm_eo;
-        regcomp(find, ".HTTP/1.[0|1]", REG_ICASE | REG_EXTENDED);
-
-        if(!regexec(find, *req, 1, match, 0)) {
-            Gline_eo = match->rm_so;
-        }
-    }
-
-    regcomp(find, "Host:.", REG_ICASE | REG_EXTENDED);
-
-    if(!regexec(find, *req, 1, match, 0)) {
-        Hline_so = match->rm_eo;
-        regcomp(find, "\r\n", REG_ICASE | REG_EXTENDED);
-
-        if(!regexec(find, *req + Hline_so, 1, match, 0)) {
-            Hline_eo = Hline_so + match->rm_so;
-
-            free(*req);
-
-            *req = (char *) malloc(*req_size - (Gline_eo - Gline_so + URL_size) - (Hline_eo - Hline_so + URL_size));
-
-            memcpy(*req + Gline_so, URL, URL_size);
-            memcpy(*req + Gline_so + URL_size, temp + Gline_eo, Hline_so - Gline_eo);
-            memcpy(*req + Gline_so + URL_size + (Hline_so - Gline_eo), URL, URL_size);
-            memcpy(*req + Gline_so + URL_size + (Hline_so - Gline_eo) + URL_size, temp + Hline_eo, *req_size - Hline_eo);
-
-            *req_size = *req_size - (Gline_eo - Gline_so + URL_size) - (Hline_eo - Hline_so + URL_size);
-        } else
-            printf("Hittade inte backslashes\n");
-    } else
-        printf("Hittade inte Host:\n");
-}
-#endif
