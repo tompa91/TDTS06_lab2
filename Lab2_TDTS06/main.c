@@ -39,7 +39,7 @@ const int REDIRECT_URL_SIZE = 350;
 
 const int REDIRECT_CONTENT_SIZE = 363;
 
-char *not_allowed = "[N|n]orrk.*ping|[S|s]ponge[B|b]ob|([B|b]ritney.[S|s]pears)|([P|p]aris.[H|h]ilton)";
+char *not_allowed = "[N|n]orrk.*ping|[S|s]ponge[B|b]ob|[B|b]ritney.*[S|s]pears|[P|p]aris.*[H|h]ilton";
 
 int receive_msg(int sock, int dir, char **buf, STATUS *status);
 
@@ -144,6 +144,7 @@ int main(void) {
 
             printf("\nSITE IS FINISHED!!!\n");
 
+            // Close client socket
             close(new_fd);
 
             exit(0);
@@ -278,11 +279,6 @@ void sock_process(int sock_id) {
 
         printf("\nSent %i bytes to broauser!\n\n", sent_bytes);
     }
-    //close(sock_id);
-    //close(servSock);
-
-    // when we don't need result(X) anymore
-    //freeaddrinfo(result);
 }
 
 /** Receive whatever message. Larger messages will be collected with many segments
@@ -331,7 +327,7 @@ int receive_msg(int sock, int dir, char **buf, STATUS *status)
         return -1;
     }
 
-    *buf = (char *) malloc(full_size);
+    *buf = (char *) malloc(full_size + 1);
 
     iter = List;
 
@@ -346,6 +342,8 @@ int receive_msg(int sock, int dir, char **buf, STATUS *status)
         iter = iter->next;
         free(deleteNode);
     }
+
+    temp[full_size] = '\0';
 
     printf("RAW DATA:\n%s\n\n", *buf);
 
@@ -413,7 +411,7 @@ int receive_msg(int sock, int dir, char **buf, STATUS *status)
                 printf("\nInnan REGEXEC\n\n");
                 if(!regexec(find, tmp, 0, NULL, 0)) {
                     printf("\nCONTENT_SEARCH Active\n\n");
-                    status = CONTENT_SEARCH;
+                    *status = CONTENT_SEARCH;
                 }
             }
         }
